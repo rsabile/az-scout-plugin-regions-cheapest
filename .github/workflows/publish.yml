@@ -3,7 +3,7 @@ name: Publish to PyPI
 on:
   push:
     tags:
-      - "v[0-9]*"   # triggers on tags like v0.2.0
+      - "v[0-9]*"   # triggers on calver tags like v2026.2.28
 
 permissions:
   contents: write  # needed to create GitHub Release
@@ -55,7 +55,7 @@ jobs:
     environment:
       name: pypi
       # Update the URL below to match your PyPI package name
-      url: https://pypi.org/p/az-scout-example
+      url: https://pypi.org/p/az-scout-plugin-regions-cheapest
     permissions:
       id-token: write  # trusted publishing (OIDC)
     steps:
