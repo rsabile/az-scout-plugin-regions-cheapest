@@ -1,0 +1,1 @@
+# az-scout-plugin-regions-cheapest
