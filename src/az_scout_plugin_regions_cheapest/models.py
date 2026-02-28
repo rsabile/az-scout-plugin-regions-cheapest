@@ -74,3 +74,5 @@ class RegionPriceSummaryResult:
     rows: list[RegionPriceRow] = field(default_factory=list)
     timestamp_utc: str = ""
     currency: str = "USD"
+    data_source: str = "live"
+    coverage_pct: float = 0.0

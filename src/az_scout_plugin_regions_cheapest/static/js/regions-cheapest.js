@@ -110,6 +110,7 @@
             renderMap(resp);
             renderChart(resp);
             renderTable(resp);
+            renderDataSourceBadge(resp);
 
             const tsEl = document.getElementById("rc-timestamp");
             if (tsEl && resp.timestampUtc) {
@@ -409,6 +410,32 @@
             <td class="text-end">${r.availabilityPct != null ? r.availabilityPct.toFixed(1) + "%" : '<span class="rc-na">N/A</span>'}</td>
             <td class="text-end">${r.avgPrice != null ? currency + " " + r.avgPrice.toFixed(4) : '<span class="rc-na">N/A</span>'}</td>
         </tr>`).join("");
+    }
+
+    // -----------------------------------------------------------------------
+    // Data source badge
+    // -----------------------------------------------------------------------
+    function renderDataSourceBadge(resp) {
+        const badge = document.getElementById("rc-data-source-badge");
+        if (!badge) return;
+        const src = resp.dataSource || "live";
+        const coverage = resp.coveragePct != null ? resp.coveragePct : null;
+        const labels = {
+            db: "Source: DB cache",
+            hybrid: "Source: Hybrid (DB + Live)",
+            live: "Source: Live API",
+        };
+        const colors = {
+            db: "bg-success",
+            hybrid: "bg-warning text-dark",
+            live: "bg-info text-dark",
+        };
+        let text = labels[src] || ("Source: " + src);
+        if (coverage != null && src !== "live") {
+            text += " (" + coverage.toFixed(0) + "% coverage)";
+        }
+        badge.textContent = text;
+        badge.className = "badge ms-2 " + (colors[src] || "bg-secondary");
     }
 
     // -----------------------------------------------------------------------

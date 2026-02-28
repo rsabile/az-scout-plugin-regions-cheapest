@@ -155,6 +155,13 @@ class TestComputeRegionStats:
         result = compute_region_stats(currency="EUR")
         assert result.currency == "EUR"
 
+    def test_data_source_is_live_by_default(self) -> None:
+        """Without DB plugin, data_source should be 'live'."""
+        from az_scout_plugin_regions_cheapest.service import compute_region_stats
+
+        result = compute_region_stats()
+        assert result.data_source == "live"
+
 
 class TestCaching:
     """Tests for caching behaviour."""
@@ -182,20 +189,20 @@ class TestGetCheapestRegions:
     def test_returns_top_n(self) -> None:
         from az_scout_plugin_regions_cheapest.service import get_cheapest_regions
 
-        result = get_cheapest_regions(top_n=2)
+        result, _ds = get_cheapest_regions(top_n=2)
         assert len(result) == 2
 
     def test_ordered_by_price(self) -> None:
         from az_scout_plugin_regions_cheapest.service import get_cheapest_regions
 
-        result = get_cheapest_regions()
+        result, _ds = get_cheapest_regions()
         prices = [r["avgPrice"] for r in result]
         assert prices == sorted(prices)
 
     def test_delta_vs_cheapest(self) -> None:
         from az_scout_plugin_regions_cheapest.service import get_cheapest_regions
 
-        result = get_cheapest_regions()
+        result, _ds = get_cheapest_regions()
         assert result[0]["deltaVsCheapest"] == 0.0
         for row in result[1:]:
             assert row["deltaVsCheapest"] > 0  # type: ignore[operator]
@@ -203,25 +210,33 @@ class TestGetCheapestRegions:
     def test_rank_starts_at_1(self) -> None:
         from az_scout_plugin_regions_cheapest.service import get_cheapest_regions
 
-        result = get_cheapest_regions()
+        result, _ds = get_cheapest_regions()
         assert result[0]["rank"] == 1
+
+    def test_returns_data_source(self) -> None:
+        from az_scout_plugin_regions_cheapest.service import get_cheapest_regions
+
+        _result, ds = get_cheapest_regions()
+        assert ds in ("db", "hybrid", "live")
 
 
 class TestMCPTools:
     """Tests for MCP tool functions."""
 
-    def test_regions_price_summary_returns_list(self) -> None:
+    def test_regions_price_summary_returns_dict(self) -> None:
         from az_scout_plugin_regions_cheapest.mcp_tools import regions_price_summary
 
         result = regions_price_summary()
-        assert isinstance(result, list)
-        assert len(result) == 3
+        assert isinstance(result, dict)
+        assert "rows" in result
+        assert "dataSource" in result
+        assert len(result["rows"]) == 3  # type: ignore[arg-type]
 
     def test_regions_price_summary_row_keys(self) -> None:
         from az_scout_plugin_regions_cheapest.mcp_tools import regions_price_summary
 
         result = regions_price_summary()
-        row = result[0]
+        row = result["rows"][0]  # type: ignore[index]
         expected_keys = {
             "geography",
             "regionName",
@@ -235,20 +250,28 @@ class TestMCPTools:
             "lat",
             "lon",
         }
-        assert set(row.keys()) == expected_keys
+        assert set(row.keys()) == expected_keys  # type: ignore[union-attr]
 
-    def test_cheapest_regions_returns_list(self) -> None:
+    def test_regions_price_summary_includes_data_source(self) -> None:
+        from az_scout_plugin_regions_cheapest.mcp_tools import regions_price_summary
+
+        result = regions_price_summary()
+        assert result["dataSource"] in ("db", "hybrid", "live")
+
+    def test_cheapest_regions_returns_dict(self) -> None:
         from az_scout_plugin_regions_cheapest.mcp_tools import cheapest_regions
 
         result = cheapest_regions(top_n=2)
-        assert isinstance(result, list)
-        assert len(result) == 2
+        assert isinstance(result, dict)
+        assert "rows" in result
+        assert "dataSource" in result
+        assert len(result["rows"]) == 2  # type: ignore[arg-type]
 
     def test_cheapest_regions_row_keys(self) -> None:
         from az_scout_plugin_regions_cheapest.mcp_tools import cheapest_regions
 
         result = cheapest_regions()
-        row = result[0]
+        row = result["rows"][0]  # type: ignore[index]
         expected_keys = {
             "rank",
             "geography",
@@ -261,7 +284,7 @@ class TestMCPTools:
             "pricedCount",
             "timestampUtc",
         }
-        assert set(row.keys()) == expected_keys
+        assert set(row.keys()) == expected_keys  # type: ignore[union-attr]
 
 
 class TestPluginRegistration:
@@ -354,3 +377,187 @@ class TestModels:
         d = row.to_dict()
         assert d["rank"] == 1
         assert d["deltaVsCheapest"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Provider integration tests
+# ---------------------------------------------------------------------------
+
+
+def _all_sku_names() -> list[str]:
+    """Return sorted list of all SKU names from the mock data."""
+    return sorted(MOCK_PRICES_EASTUS.keys())
+
+
+def _build_db_rows(
+    regions: list[str],
+    skus: list[str],
+    prices_map: dict[str, dict[str, dict[str, object]]],
+) -> list[dict[str, object]]:
+    """Build mock DB query response rows."""
+    rows: list[dict[str, object]] = []
+    for region in regions:
+        region_data = prices_map.get(region, {})
+        for sku in skus:
+            if sku in region_data:
+                entry = region_data[sku]
+                rows.append(
+                    {
+                        "region": region,
+                        "sku": sku,
+                        "price_hourly": entry["paygo"],
+                        "expires_at_utc": "2026-03-01T00:00:00Z",
+                    }
+                )
+    return rows
+
+
+class TestDbProviderAvailableFullCoverage:
+    """Case 1: DB plugin has full coverage → dataSource='db', no core calls."""
+
+    def test_uses_db_source(self) -> None:
+        from az_scout_plugin_regions_cheapest.service import compute_region_stats
+
+        prices_map: dict[str, dict[str, dict[str, object]]] = {
+            "eastus": MOCK_PRICES_EASTUS,
+            "westeurope": MOCK_PRICES_WESTEUROPE,
+            "japaneast": MOCK_PRICES_JAPANEAST,
+        }
+
+        def mock_status(*a: object, **kw: object) -> dict[str, object]:
+            return {"db_connected": True, "retail_prices_count": 5000}
+
+        def mock_query(*a: object, **kw: object) -> dict[str, object]:
+            body = kw.get("json", {})
+            req_regions: list[str] = body.get("regions", [])
+            req_skus: list[str] = body.get("skus", [])
+            return {
+                "currency": "USD",
+                "rows": _build_db_rows(req_regions, req_skus, prices_map),
+            }
+
+        with (
+            patch(
+                "az_scout_plugin_regions_cheapest.providers._internal_get",
+                side_effect=mock_status,
+            ),
+            patch(
+                "az_scout_plugin_regions_cheapest.providers._internal_post",
+                side_effect=mock_query,
+            ),
+        ):
+            result = compute_region_stats()
+
+        assert result.data_source == "db"
+        assert len(result.rows) == 3
+        # Prices should be consistent with mock data
+        eastus = next(r for r in result.rows if r.region_id == "eastus")
+        assert eastus.avg_price is not None
+
+
+class TestDbProviderInstalledButEmpty:
+    """Case 2: DB plugin connected but has no data → dataSource='live'."""
+
+    def test_falls_back_to_live(self) -> None:
+        from az_scout_plugin_regions_cheapest.service import compute_region_stats
+
+        def mock_status(*a: object, **kw: object) -> dict[str, object]:
+            return {"db_connected": True, "retail_prices_count": 0}
+
+        with patch(
+            "az_scout_plugin_regions_cheapest.providers._internal_get",
+            side_effect=mock_status,
+        ):
+            result = compute_region_stats()
+
+        assert result.data_source == "live"
+        assert len(result.rows) == 3
+
+
+class TestDbProviderPartialCoverage:
+    """Case 3: DB has some data but not enough → dataSource='hybrid'."""
+
+    def test_hybrid_fill(self) -> None:
+        from az_scout_plugin_regions_cheapest.service import compute_region_stats
+
+        # DB only returns prices for eastus, not for westeurope/japaneast
+        def mock_status(*a: object, **kw: object) -> dict[str, object]:
+            return {"db_connected": True, "retail_prices_count": 5000}
+
+        def mock_query(*a: object, **kw: object) -> dict[str, object]:
+            body = kw.get("json", {})
+            req_skus: list[str] = body.get("skus", [])
+            # Only return eastus data → partial coverage
+            return {
+                "currency": "USD",
+                "rows": _build_db_rows(
+                    ["eastus"],
+                    req_skus,
+                    {
+                        "eastus": MOCK_PRICES_EASTUS,
+                    },
+                ),
+            }
+
+        with (
+            patch(
+                "az_scout_plugin_regions_cheapest.providers._internal_get",
+                side_effect=mock_status,
+            ),
+            patch(
+                "az_scout_plugin_regions_cheapest.providers._internal_post",
+                side_effect=mock_query,
+            ),
+        ):
+            result = compute_region_stats()
+
+        assert result.data_source == "hybrid"
+        assert len(result.rows) == 3
+        # All regions should still have data (filled by core)
+        for row in result.rows:
+            assert row.avg_price is not None
+
+
+class TestDbProviderUnreachable:
+    """Case 4: DB plugin unreachable/timeout → fallback to live."""
+
+    def test_timeout_falls_back(self) -> None:
+        from az_scout_plugin_regions_cheapest.service import compute_region_stats
+
+        def mock_status(*a: object, **kw: object) -> dict[str, object]:
+            raise ConnectionError("Connection refused")
+
+        with patch(
+            "az_scout_plugin_regions_cheapest.providers._internal_get",
+            side_effect=mock_status,
+        ):
+            result = compute_region_stats()
+
+        assert result.data_source == "live"
+        assert len(result.rows) == 3
+
+    def test_status_ok_but_query_fails(self) -> None:
+        """Status is reachable but the query endpoint fails."""
+        from az_scout_plugin_regions_cheapest.service import compute_region_stats
+
+        def mock_status(*a: object, **kw: object) -> dict[str, object]:
+            return {"db_connected": True, "retail_prices_count": 5000}
+
+        def mock_query(*a: object, **kw: object) -> dict[str, object]:
+            raise TimeoutError("read timed out")
+
+        with (
+            patch(
+                "az_scout_plugin_regions_cheapest.providers._internal_get",
+                side_effect=mock_status,
+            ),
+            patch(
+                "az_scout_plugin_regions_cheapest.providers._internal_post",
+                side_effect=mock_query,
+            ),
+        ):
+            result = compute_region_stats()
+
+        # DB query returned empty → treated as live fallback
+        assert result.data_source == "live"
+        assert len(result.rows) == 3

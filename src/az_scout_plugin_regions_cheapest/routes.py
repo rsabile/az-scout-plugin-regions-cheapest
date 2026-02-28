@@ -28,6 +28,8 @@ async def summary(
             "rows": [r.to_dict() for r in result.rows],
             "timestampUtc": result.timestamp_utc,
             "currency": result.currency,
+            "dataSource": result.data_source,
+            "coveragePct": result.coverage_pct,
         }
     )
 
@@ -41,9 +43,9 @@ async def cheapest(
     """Return the top N cheapest Azure regions by average VM price."""
     from az_scout_plugin_regions_cheapest.service import get_cheapest_regions
 
-    rows = get_cheapest_regions(
+    rows, data_source = get_cheapest_regions(
         tenant_id=tenantId,
         currency=currency,
         top_n=topN,
     )
-    return JSONResponse({"rows": rows})
+    return JSONResponse({"rows": rows, "dataSource": data_source})
