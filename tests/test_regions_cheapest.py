@@ -123,15 +123,17 @@ class TestComputeRegionStats:
         eastus = next(r for r in result.rows if r.region_id == "eastus")
         assert eastus.availability_pct == 100.0
         assert eastus.priced_count == 10
-        assert eastus.sample_size == 10
+        assert eastus.sku_count == 10
 
     def test_availability_partial_coverage(self) -> None:
         from az_scout_plugin_regions_cheapest.service import compute_region_stats
 
         result = compute_region_stats()
         japan = next(r for r in result.rows if r.region_id == "japaneast")
-        assert japan.availability_pct == 30.0
+        # Japan has 3 SKUs returned, all with valid prices → 100% availability
+        assert japan.availability_pct == 100.0
         assert japan.priced_count == 3
+        assert japan.sku_count == 3
 
     def test_sorted_by_avg_price_ascending(self) -> None:
         from az_scout_plugin_regions_cheapest.service import compute_region_stats
@@ -152,14 +154,6 @@ class TestComputeRegionStats:
 
         result = compute_region_stats(currency="EUR")
         assert result.currency == "EUR"
-
-    def test_custom_sku_sample(self) -> None:
-        from az_scout_plugin_regions_cheapest.service import compute_region_stats
-
-        result = compute_region_stats(sku_sample=["Standard_B2s", "Standard_D2s_v5"])
-        eastus = next(r for r in result.rows if r.region_id == "eastus")
-        assert eastus.sample_size == 2
-        assert eastus.priced_count == 2
 
 
 class TestCaching:
@@ -234,7 +228,7 @@ class TestMCPTools:
             "regionId",
             "avgPrice",
             "availabilityPct",
-            "sampleSize",
+            "skuCount",
             "pricedCount",
             "timestampUtc",
             "countryCode",
@@ -263,7 +257,7 @@ class TestMCPTools:
             "avgPrice",
             "deltaVsCheapest",
             "availabilityPct",
-            "sampleSize",
+            "skuCount",
             "pricedCount",
             "timestampUtc",
         }
@@ -330,7 +324,7 @@ class TestModels:
             region_id="eastus",
             avg_price=0.2134,
             availability_pct=100.0,
-            sample_size=10,
+            sku_count=10,
             priced_count=10,
             timestamp_utc="2026-01-01T00:00:00+00:00",
             country_code="US",
@@ -353,7 +347,7 @@ class TestModels:
             avg_price=0.2134,
             delta_vs_cheapest=0.0,
             availability_pct=100.0,
-            sample_size=10,
+            sku_count=10,
             priced_count=10,
             timestamp_utc="2026-01-01T00:00:00+00:00",
         )

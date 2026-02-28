@@ -98,8 +98,11 @@
         try {
             const resp = await apiFetch(url);
             data = resp;
-            const sampleEl = document.getElementById("rc-sample-size");
-            if (sampleEl && resp.sampleSkus) sampleEl.textContent = resp.sampleSkus.length;
+            const skuEl = document.getElementById("rc-sku-count");
+            if (skuEl && resp.rows && resp.rows.length) {
+                const maxSkus = Math.max(...resp.rows.map(r => r.skuCount || 0));
+                skuEl.textContent = maxSkus + " ";
+            }
 
             loading.classList.add("d-none");
             content.classList.remove("d-none");
@@ -260,7 +263,7 @@
             .on("mouseover", (event, d) => {
                 showTooltip(tooltip, event, d.regionName, d.avgPrice,
                     1, resp.currency,
-                    `${d.geography} | Avail: ${d.availabilityPct.toFixed(1)}% | Sample: ${d.sampleSize}`,
+                    `${d.geography} | Avail: ${d.availabilityPct.toFixed(1)}% | SKUs: ${d.skuCount}`,
                     resp.timestampUtc);
             })
             .on("mousemove", (event) => moveTooltip(tooltip, event))

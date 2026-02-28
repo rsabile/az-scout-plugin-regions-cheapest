@@ -9,18 +9,17 @@ def regions_price_summary(
     tenant_id: str | None = None,
     currency: str = "USD",
     group_by: str = "region",
-    sku_sample: list[str] | None = None,
 ) -> list[dict[str, object]]:
     """Return per-region average VM pricing summary.
 
     **Definitions:**
 
     * *avgPrice* — mean hourly Linux retail (pay-as-you-go) price across
-      a curated sample of VM SKUs in the region.
-    * *availabilityPct* — percentage of sample SKUs that have a valid
-      price for the region: ``(pricedCount / sampleSize) × 100``.
+      all VM SKUs available in the region.
+    * *availabilityPct* — percentage of VM SKUs that have a valid
+      price for the region: ``(pricedCount / skuCount) × 100``.
     * *timestampUtc* — ISO 8601 UTC timestamp when data was computed
-      (results are cached for ~10 minutes).
+      (results are cached for ~10 minutes; underlying prices cached ~1 hour).
 
     Parameters
     ----------
@@ -30,15 +29,12 @@ def regions_price_summary(
         ISO 4217 currency code (default ``"USD"``).
     group_by:
         ``"region"`` (default) or ``"geography"`` for grouped view.
-    sku_sample:
-        Override the built-in SKU sample list.  Pass a list of ARM SKU
-        names (e.g. ``["Standard_D2s_v5", "Standard_B2s"]``).
 
     Returns
     -------
     list[dict]
         One dict per region with keys: geography, regionName, regionId,
-        avgPrice, availabilityPct, sampleSize, pricedCount, timestampUtc.
+        avgPrice, availabilityPct, skuCount, pricedCount, timestampUtc.
     """
     from az_scout_plugin_regions_cheapest.service import compute_region_stats
 
@@ -46,7 +42,6 @@ def regions_price_summary(
         tenant_id=tenant_id,
         currency=currency,
         group_by=group_by,
-        sku_sample=sku_sample,
     )
     return [r.to_dict() for r in result.rows]
 
@@ -55,7 +50,6 @@ def cheapest_regions(
     tenant_id: str | None = None,
     currency: str = "USD",
     top_n: int = 10,
-    sku_sample: list[str] | None = None,
 ) -> list[dict[str, object]]:
     """Return the top N cheapest Azure regions by average VM price.
 
@@ -64,9 +58,9 @@ def cheapest_regions(
 
     **Assumptions:**
 
-    * Pricing is based on a curated sample of ~10 popular VM SKUs.
+    * Pricing is based on all VM SKUs available in each region.
     * Only Linux pay-as-you-go hourly rates are considered.
-    * Results are cached for ~10 minutes.
+    * Results are cached for ~10 minutes (underlying prices ~1 hour).
     * ``timestampUtc`` indicates when data was last computed.
 
     Parameters
@@ -77,14 +71,12 @@ def cheapest_regions(
         ISO 4217 currency code (default ``"USD"``).
     top_n:
         Number of cheapest regions to return (default 10).
-    sku_sample:
-        Override the built-in SKU sample list.
 
     Returns
     -------
     list[dict]
         Ranked list with keys: rank, geography, regionName, regionId,
-        avgPrice, deltaVsCheapest, availabilityPct, sampleSize,
+        avgPrice, deltaVsCheapest, availabilityPct, skuCount,
         pricedCount, timestampUtc.
     """
     from az_scout_plugin_regions_cheapest.service import get_cheapest_regions
@@ -93,5 +85,4 @@ def cheapest_regions(
         tenant_id=tenant_id,
         currency=currency,
         top_n=top_n,
-        sku_sample=sku_sample,
     )

@@ -27,7 +27,6 @@ async def summary(
         {
             "rows": [r.to_dict() for r in result.rows],
             "timestampUtc": result.timestamp_utc,
-            "sampleSkus": result.sample_skus,
             "currency": result.currency,
         }
     )

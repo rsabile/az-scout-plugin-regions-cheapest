@@ -12,7 +12,7 @@ class RegionPriceRow:
     region_id: str
     avg_price: float | None
     availability_pct: float
-    sample_size: int
+    sku_count: int
     priced_count: int
     timestamp_utc: str
     country_code: str = ""
@@ -27,7 +27,7 @@ class RegionPriceRow:
             "regionId": self.region_id,
             "avgPrice": self.avg_price,
             "availabilityPct": round(self.availability_pct, 2),
-            "sampleSize": self.sample_size,
+            "skuCount": self.sku_count,
             "pricedCount": self.priced_count,
             "timestampUtc": self.timestamp_utc,
             "countryCode": self.country_code,
@@ -47,7 +47,7 @@ class CheapestRegionRow:
     avg_price: float
     delta_vs_cheapest: float
     availability_pct: float
-    sample_size: int
+    sku_count: int
     priced_count: int
     timestamp_utc: str
 
@@ -61,7 +61,7 @@ class CheapestRegionRow:
             "avgPrice": round(self.avg_price, 6),
             "deltaVsCheapest": round(self.delta_vs_cheapest, 6),
             "availabilityPct": round(self.availability_pct, 2),
-            "sampleSize": self.sample_size,
+            "skuCount": self.sku_count,
             "pricedCount": self.priced_count,
             "timestampUtc": self.timestamp_utc,
         }
@@ -73,5 +73,4 @@ class RegionPriceSummaryResult:
 
     rows: list[RegionPriceRow] = field(default_factory=list)
     timestamp_utc: str = ""
-    sample_skus: list[str] = field(default_factory=list)
     currency: str = "USD"
