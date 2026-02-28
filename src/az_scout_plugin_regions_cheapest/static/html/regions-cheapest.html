@@ -1,0 +1,101 @@
+<!-- Regions Cheapest – HTML fragment loaded at runtime -->
+<div class="rc-toolbar d-flex align-items-center gap-2 mb-3 flex-wrap">
+  <div class="input-group input-group-sm" style="max-width:140px">
+    <label class="input-group-text" for="rc-currency">Currency</label>
+    <select id="rc-currency" class="form-select form-select-sm">
+      <option value="USD" selected>USD</option>
+      <option value="EUR">EUR</option>
+      <option value="GBP">GBP</option>
+      <option value="JPY">JPY</option>
+      <option value="AUD">AUD</option>
+      <option value="CAD">CAD</option>
+      <option value="CHF">CHF</option>
+      <option value="INR">INR</option>
+      <option value="BRL">BRL</option>
+    </select>
+  </div>
+
+  <div class="btn-group btn-group-sm" role="group" aria-label="Group by">
+    <input type="radio" class="btn-check" name="rc-group" id="rc-group-region" value="region" checked autocomplete="off">
+    <label class="btn btn-outline-primary" for="rc-group-region">By Region</label>
+    <input type="radio" class="btn-check" name="rc-group" id="rc-group-geo" value="geography" autocomplete="off">
+    <label class="btn btn-outline-primary" for="rc-group-geo">By Geography</label>
+  </div>
+
+  <div class="btn-group btn-group-sm" role="group" aria-label="Map mode">
+    <input type="radio" class="btn-check" name="rc-map-mode" id="rc-map-choropleth" value="choropleth" checked autocomplete="off">
+    <label class="btn btn-outline-secondary" for="rc-map-choropleth">Map: Choropleth</label>
+    <input type="radio" class="btn-check" name="rc-map-mode" id="rc-map-points" value="points" autocomplete="off">
+    <label class="btn btn-outline-secondary" for="rc-map-points">Map: Region points</label>
+  </div>
+
+  <button id="rc-refresh" class="btn btn-sm btn-outline-success" title="Refresh data">
+    <i class="bi bi-arrow-clockwise"></i> Refresh
+  </button>
+
+  <span class="text-muted small ms-auto" id="rc-help-text">
+    Average price computed from a sample of <span id="rc-sample-size">10</span> VM SKUs.
+    Availability = % of sample with price.
+  </span>
+</div>
+
+<div id="rc-loading" class="text-center py-5 d-none">
+  <div class="spinner-border text-primary" role="status">
+    <span class="visually-hidden">Loading…</span>
+  </div>
+  <p class="mt-2 text-muted">Fetching region pricing data…</p>
+</div>
+
+<div id="rc-error" class="alert alert-danger d-none" role="alert"></div>
+
+<div id="rc-content" class="d-none">
+  <div class="row mb-3">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body p-2">
+          <div id="rc-map" style="width:100%;height:420px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row mb-3">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header py-1">
+          <small class="text-muted">Average price per VM per hour – sorted ascending (cheapest first)</small>
+        </div>
+        <div class="card-body p-2" style="overflow-x:auto;">
+          <div id="rc-chart" style="width:100%;height:300px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row mb-3">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header py-1 d-flex justify-content-between align-items-center">
+          <small class="text-muted">Region pricing table</small>
+          <small class="text-muted" id="rc-timestamp"></small>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-striped table-hover mb-0" id="rc-table">
+              <thead>
+                <tr>
+                  <th role="button" data-sort="geography">Geography <i class="bi bi-chevron-expand"></i></th>
+                  <th role="button" data-sort="regionName">Region Name <i class="bi bi-chevron-expand"></i></th>
+                  <th role="button" data-sort="regionId">Region ID <i class="bi bi-chevron-expand"></i></th>
+                  <th role="button" data-sort="availabilityPct" class="text-end">Available VM Instances (%) <i class="bi bi-chevron-expand"></i></th>
+                  <th role="button" data-sort="avgPrice" class="text-end">Avg price / VM / hour <i class="bi bi-chevron-expand"></i></th>
+                </tr>
+              </thead>
+              <tbody id="rc-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

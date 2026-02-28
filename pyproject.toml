@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "az-scout-plugin-regions-cheapest"
+version = "0.1.0"
+description = "az-scout plugin: Regions Cheapest – choropleth, bar chart & table of VM pricing by region"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "az-scout",
+    "fastapi",
+]
+
+[project.urls]
+Homepage = "https://github.com/rsabile/az-scout-plugin-regions-cheapest"
+Repository = "https://github.com/rsabile/az-scout-plugin-regions-cheapest"
+Issues = "https://github.com/rsabile/az-scout-plugin-regions-cheapest/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0",
+    "pytest-cov>=6.0",
+    "ruff>=0.11",
+    "mypy>=1.15",
+    "httpx>=0.28",
+]
+
+[project.entry-points."az_scout.plugins"]
+regions_cheapest = "az_scout_plugin_regions_cheapest:plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/az_scout_plugin_regions_cheapest"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
