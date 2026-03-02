@@ -3,6 +3,8 @@
 Mounted at ``/plugins/regions-cheapest/`` by the core plugin manager.
 """
 
+import asyncio
+
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
@@ -18,7 +20,8 @@ async def summary(
     """Return per-region average VM pricing summary."""
     from az_scout_plugin_regions_cheapest.service import compute_region_stats
 
-    result = compute_region_stats(
+    result = await asyncio.to_thread(
+        compute_region_stats,
         tenant_id=tenantId,
         currency=currency,
         group_by=groupBy,
@@ -43,7 +46,8 @@ async def cheapest(
     """Return the top N cheapest Azure regions by average VM price."""
     from az_scout_plugin_regions_cheapest.service import get_cheapest_regions
 
-    rows, data_source = get_cheapest_regions(
+    rows, data_source = await asyncio.to_thread(
+        get_cheapest_regions,
         tenant_id=tenantId,
         currency=currency,
         top_n=topN,
