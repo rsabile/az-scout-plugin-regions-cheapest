@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "az-scout",
+    "az-scout-plugin-bdd-sku",
     "fastapi",
 ]
 

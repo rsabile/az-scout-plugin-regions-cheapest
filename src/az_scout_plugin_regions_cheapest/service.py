@@ -1,23 +1,19 @@
 """Core business logic for the Regions Cheapest plugin.
 
-Computes per-region average VM pricing using **all** VM SKUs available
-in each region.  When the ``az-scout-plugin-bdd-sku`` DB cache plugin is
-installed and populated, cached prices are used in bulk.  Otherwise the
-plugin falls back to the core az-scout Retail Prices API (live calls).
+Computes per-region average VM pricing using pre-aggregated data from
+the ``az-scout-plugin-bdd-sku`` API.  This plugin is a **mandatory**
+dependency — without a configured BDD API URL, it returns an error.
 
 **Key definitions:**
 
 * *Average price per VM per hour* — mean hourly Linux retail (pay-as-you-go)
-  price across all VM SKUs returned by the Retail Prices API for a region.
-* *Availability %* — ``(priced_count / sku_count) * 100`` where
-  ``priced_count`` is the number of SKUs that have a valid paygo price.
+  price across all VM SKUs in a region (pre-computed by the BDD API).
+* *Median price* — median hourly price across all VM SKUs.
 """
 
 import json
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -25,16 +21,10 @@ from az_scout_plugin_regions_cheapest.models import (
     RegionPriceRow,
     RegionPriceSummaryResult,
 )
-from az_scout_plugin_regions_cheapest.providers import (
-    CoreApiPricingProvider,
-    DbPricingProvider,
-)
 
 logger = logging.getLogger(__name__)
 
 _CACHE_TTL = 600  # 10 minutes
-_MAX_CONCURRENCY = 8
-_DB_COVERAGE_THRESHOLD = 0.7  # 70 %
 
 # Module-level cache: key -> (timestamp, result)
 _result_cache: dict[str, tuple[float, RegionPriceSummaryResult]] = {}
@@ -64,175 +54,58 @@ def _load_location_map() -> dict[str, dict[str, Any]]:
     return _location_map
 
 
-def _fetch_region_prices(
-    region_name: str,
-    currency_code: str,
-) -> dict[str, float | None]:
-    """Fetch pay-as-you-go prices for all VM SKUs in one region.
-
-    Calls the core ``get_retail_prices`` function which fetches all VM
-    prices for a region in a single paginated request and caches them
-    (1-hour TTL).  Returns ``{sku_name: paygo_price | None}``.
-    """
-    from az_scout.azure_api.pricing import get_retail_prices
-
-    all_prices = get_retail_prices(region_name, currency_code)
-    return {
-        sku: entry["paygo"] if entry.get("paygo") is not None else None
-        for sku, entry in all_prices.items()
-    }
-
-
-def _collect_all_skus(region_names: list[str], currency: str) -> dict[str, dict[str, float | None]]:
-    """Fetch prices for every region via the core API (live path)."""
-    region_prices: dict[str, dict[str, float | None]] = {}
-
-    def _fetch_one(region_name: str) -> tuple[str, dict[str, float | None]]:
-        return region_name, _fetch_region_prices(region_name, currency)
-
-    workers = min(len(region_names), _MAX_CONCURRENCY) if region_names else 1
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_fetch_one, rn): rn for rn in region_names}
-        for future in as_completed(futures):
-            rn = futures[future]
-            try:
-                name, prices = future.result()
-                region_prices[name] = prices
-            except Exception:
-                logger.warning("Failed to fetch prices for region %s", rn)
-
-    return region_prices
-
-
-def _build_rows(
-    region_names: list[str],
-    display_names: dict[str, str],
-    region_prices: dict[str, dict[str, float | None]],
+def _enrich_region(
+    region: str,
     geo_map: dict[str, str],
     loc_map: dict[str, dict[str, Any]],
-    timestamp: str,
-) -> list[RegionPriceRow]:
-    """Build sorted ``RegionPriceRow`` list from aggregated prices."""
-    rows: list[RegionPriceRow] = []
-    for region_name in region_names:
-        prices = region_prices.get(region_name, {})
-        valid_prices = [p for p in prices.values() if p is not None]
-        priced_count = len(valid_prices)
-        sku_count = len(prices)
-        avg_price = sum(valid_prices) / priced_count if priced_count else None
-        availability_pct = (priced_count / sku_count * 100) if sku_count else 0.0
+) -> tuple[str, str, float | None, float | None]:
+    """Return (geography, country_code, lat, lon) for a region ID."""
+    geography = geo_map.get(region, "Unknown")
+    loc = loc_map.get(region, {})
+    return geography, loc.get("countryCode", ""), loc.get("lat"), loc.get("lon")
 
-        loc = loc_map.get(region_name, {})
-        rows.append(
-            RegionPriceRow(
-                geography=geo_map.get(region_name, "Unknown"),
-                region_name=display_names.get(region_name, region_name),
-                region_id=region_name,
-                avg_price=round(avg_price, 6) if avg_price is not None else None,
-                availability_pct=availability_pct,
-                sku_count=sku_count,
-                priced_count=priced_count,
-                timestamp_utc=timestamp,
-                country_code=loc.get("countryCode", ""),
-                lat=loc.get("lat"),
-                lon=loc.get("lon"),
-            )
+
+def _fetch_all_summary_rows() -> list[dict[str, Any]]:
+    """Fetch all pricing summary rows from the BDD API, handling pagination."""
+    from az_scout_bdd_sku.api_client import v1_pricing_summary_latest  # type: ignore[import-untyped]
+
+    all_rows: list[dict[str, Any]] = []
+    cursor = ""
+    while True:
+        resp = v1_pricing_summary_latest(
+            price_type="retail",
+            limit=1000,
+            cursor=cursor,
         )
-    rows.sort(key=lambda r: (r.avg_price is None, r.avg_price or 0))
-    return rows
-
-
-def _try_db_provider(
-    region_names: list[str],
-    all_skus: list[str],
-    currency: str,
-    tenant_id: str | None,
-) -> tuple[dict[str, dict[str, float | None]], str, float]:
-    """Attempt to load prices from the DB cache plugin.
-
-    Returns
-    -------
-    tuple
-        (region_prices dict, data_source label, coverage ratio 0-1)
-    """
-    db = DbPricingProvider()
-
-    if not db.is_available():
-        return {}, "live", 0.0
-
-    db_prices = db.get_prices_bulk(
-        regions=region_names,
-        skus=all_skus,
-        currency=currency,
-        tenant_id=tenant_id,
-    )
-
-    if not db_prices:
-        return {}, "live", 0.0
-
-    # Convert flat mapping to per-region dict
-    region_prices: dict[str, dict[str, float | None]] = {}
-    for (region, sku), price in db_prices.items():
-        region_prices.setdefault(region, {})[sku] = price
-
-    expected = len(region_names) * len(all_skus) if all_skus else 0
-    coverage = len(db_prices) / expected if expected else 0.0
-
-    if coverage >= _DB_COVERAGE_THRESHOLD:
-        return region_prices, "db", coverage
-
-    # --- Hybrid fill: fetch missing pairs from core API ---
-    missing_regions: set[str] = set()
-    for rn in region_names:
-        region_data = region_prices.get(rn, {})
-        for sku in all_skus:
-            if sku not in region_data:
-                missing_regions.add(rn)
-                break  # at least one SKU missing → need full region fetch
-
-    if missing_regions:
-        core = CoreApiPricingProvider()
-        core_prices = core.get_prices_bulk(
-            regions=list(missing_regions),
-            skus=all_skus,
-            currency=currency,
-            tenant_id=tenant_id,
-        )
-        for (region, sku), price in core_prices.items():
-            region_prices.setdefault(region, {})[sku] = price
-
-    filled = sum(len(v) for v in region_prices.values())
-    final_coverage = filled / expected if expected else 0.0
-    return region_prices, "hybrid", final_coverage
+        rows = resp.get("rows", [])
+        all_rows.extend(rows)
+        next_cursor = resp.get("nextCursor", "")
+        if not next_cursor or not rows:
+            break
+        cursor = next_cursor
+    return all_rows
 
 
 def compute_region_stats(
-    tenant_id: str | None = None,
-    currency: str = "USD",
     group_by: str = "region",
 ) -> RegionPriceSummaryResult:
-    """Compute per-region average pricing using all VM SKUs.
+    """Compute per-region average pricing from BDD API data.
 
-    When the ``az-scout-plugin-bdd-sku`` DB cache plugin is installed and
-    populated, cached prices are fetched in bulk.  If the DB plugin is
-    unavailable or coverage is below 70 %, the plugin automatically falls
-    back to live core API calls (hybrid or full live).
+    Fetches all pricing summary rows (latest snapshot, retail, global
+    aggregate) from the ``az-scout-plugin-bdd-sku`` API and enriches
+    them with geography and location metadata.
 
     Parameters
     ----------
-    tenant_id:
-        Azure tenant ID (optional, forwarded to discovery API).
-    currency:
-        ISO 4217 currency code, default ``"USD"``.
     group_by:
         ``"region"`` (default) or ``"geography"``.
 
     Returns
     -------
     RegionPriceSummaryResult
-        Contains rows for each region, metadata, and ``data_source`` label.
+        Contains rows for each region and metadata.
     """
-    cache_key = f"{tenant_id or ''}:{currency}"
+    cache_key = "summary"
     now = time.monotonic()
     cached = _result_cache.get(cache_key)
     if cached is not None:
@@ -240,118 +113,123 @@ def compute_region_stats(
         if now - ts < _CACHE_TTL:
             return data
 
-    # --- Discover regions via core API ---
-    from az_scout.azure_api.discovery import list_regions
+    from az_scout_bdd_sku.api_client import ApiNotConfiguredError
 
     try:
-        regions = list_regions(tenant_id=tenant_id)
+        api_rows = _fetch_all_summary_rows()
+    except ApiNotConfiguredError:
+        raise
     except Exception:
-        logger.exception("Failed to discover regions")
-        return RegionPriceSummaryResult(
-            timestamp_utc=datetime.now(UTC).isoformat(),
-            currency=currency,
-        )
+        logger.exception("Failed to fetch pricing summary from BDD API")
+        return RegionPriceSummaryResult()
 
     geo_map = _load_geography_map()
     loc_map = _load_location_map()
-    timestamp = datetime.now(UTC).isoformat()
-    region_names = [r["name"] for r in regions]
-    display_names: dict[str, str] = {r["name"]: r["displayName"] for r in regions}
 
-    # --- Try DB provider first, fallback to core ---
-    # We need a SKU sample list for the DB query.  We fetch one region's
-    # SKU catalog from the core API to get the universe of SKU names.
-    sample_skus: list[str] = []
-    try:
-        sample_prices = _fetch_region_prices(region_names[0], currency) if region_names else {}
-        sample_skus = list(sample_prices.keys())
-    except Exception:
-        logger.warning("Failed to fetch sample SKU list")
+    # Filter to global aggregates (category is null → None in JSON)
+    global_rows = [r for r in api_rows if r.get("category") is None]
 
-    data_source = "live"
-    coverage_pct = 0.0
-
-    if sample_skus:
-        region_prices, data_source, coverage_pct = _try_db_provider(
-            region_names,
-            sample_skus,
-            currency,
-            tenant_id,
+    rows: list[RegionPriceRow] = []
+    timestamp = ""
+    for r in global_rows:
+        region = r.get("region", "")
+        if not region:
+            continue
+        geography, country_code, lat, lon = _enrich_region(region, geo_map, loc_map)
+        snap = r.get("snapshotUtc", "")
+        if snap and not timestamp:
+            timestamp = snap
+        rows.append(
+            RegionPriceRow(
+                geography=geography,
+                region_name=region,
+                region_id=region,
+                avg_price=r.get("avgPrice"),
+                median_price=r.get("medianPrice"),
+                min_price=r.get("minPrice"),
+                max_price=r.get("maxPrice"),
+                sku_count=r.get("skuCount", 0),
+                timestamp_utc=snap,
+                country_code=country_code,
+                lat=lat,
+                lon=lon,
+            )
         )
-    else:
-        region_prices = {}
 
-    # If DB path produced data, merge the sample region we already fetched
-    if data_source in ("db", "hybrid") and region_names and region_names[0] not in region_prices:
-        region_prices[region_names[0]] = {
-            sku: price for sku, price in (sample_prices or {}).items()
-        }
-
-    # Full live fallback
-    if data_source == "live":
-        region_prices = _collect_all_skus(region_names, currency)
-        coverage_pct = 100.0
-
-    rows = _build_rows(region_names, display_names, region_prices, geo_map, loc_map, timestamp)
+    rows.sort(key=lambda r: (r.avg_price is None, r.avg_price or 0))
 
     result = RegionPriceSummaryResult(
         rows=rows,
         timestamp_utc=timestamp,
-        currency=currency,
-        data_source=data_source,
-        coverage_pct=round(coverage_pct * 100, 1),
+        data_source="bdd",
     )
     _result_cache[cache_key] = (time.monotonic(), result)
     return result
 
 
 def get_cheapest_regions(
-    tenant_id: str | None = None,
-    currency: str = "USD",
     top_n: int = 10,
+    price_type: str = "retail",
+    metric: str = "median",
 ) -> tuple[list[dict[str, object]], str]:
-    """Return the top N cheapest regions by average VM price.
+    """Return the top N cheapest regions by pricing metric.
 
-    Each row includes a ``deltaVsCheapest`` field showing how much more
-    expensive the region is compared to the cheapest.
+    Delegates to the BDD API ``v1_pricing_cheapest`` endpoint which
+    returns pre-ranked results.
 
     Parameters
     ----------
-    tenant_id:
-        Azure tenant ID (optional).
-    currency:
-        ISO 4217 currency code.
     top_n:
         Number of regions to return.
+    price_type:
+        Price type filter (default ``"retail"``).
+    metric:
+        Pricing metric to rank by (default ``"median"``).
 
     Returns
     -------
     tuple[list[dict], str]
         Ranked cheapest regions with delta information, and the data source label.
     """
+    from az_scout_bdd_sku.api_client import ApiNotConfiguredError, v1_pricing_cheapest
+
     from az_scout_plugin_regions_cheapest.models import CheapestRegionRow
 
-    summary = compute_region_stats(tenant_id, currency, "region")
-    priced = [r for r in summary.rows if r.avg_price is not None]
-    priced.sort(key=lambda r: r.avg_price or 0)
+    try:
+        resp = v1_pricing_cheapest(
+            price_type=price_type,
+            metric=metric,
+            limit=top_n,
+        )
+    except ApiNotConfiguredError:
+        raise
+    except Exception:
+        logger.exception("Failed to fetch cheapest regions from BDD API")
+        return [], "bdd"
 
-    if not priced:
-        return [], summary.data_source
+    api_rows = resp.get("rows", [])
+    geo_map = _load_geography_map()
+    loc_map = _load_location_map()
 
-    cheapest_price = priced[0].avg_price or 0.0
+    if not api_rows:
+        return [], "bdd"
+
+    cheapest_price = api_rows[0].get("avgPrice", 0.0) or 0.0
     result: list[dict[str, object]] = []
-    for i, row in enumerate(priced[:top_n]):
+    for i, r in enumerate(api_rows):
+        region = r.get("region", "")
+        geography, _cc, _lat, _lon = _enrich_region(region, geo_map, loc_map)
+        avg_price = r.get("avgPrice", 0.0) or 0.0
         cr = CheapestRegionRow(
             rank=i + 1,
-            geography=row.geography,
-            region_name=row.region_name,
-            region_id=row.region_id,
-            avg_price=row.avg_price or 0.0,
-            delta_vs_cheapest=(row.avg_price or 0.0) - cheapest_price,
-            availability_pct=row.availability_pct,
-            sku_count=row.sku_count,
-            priced_count=row.priced_count,
-            timestamp_utc=row.timestamp_utc,
+            geography=geography,
+            region_name=region,
+            region_id=region,
+            avg_price=avg_price,
+            median_price=r.get("medianPrice", 0.0) or 0.0,
+            delta_vs_cheapest=avg_price - cheapest_price,
+            sku_count=r.get("skuCount", 0),
+            timestamp_utc=r.get("snapshotUtc", ""),
         )
         result.append(cr.to_dict())
-    return result, summary.data_source
+    return result, "bdd"

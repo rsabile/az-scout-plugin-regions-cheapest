@@ -13,43 +13,49 @@ router = APIRouter()
 
 @router.get("/summary")
 async def summary(
-    tenantId: str | None = Query(None, description="Azure tenant ID."),  # noqa: N803
-    currency: str = Query("USD", description="ISO 4217 currency code."),
     groupBy: str = Query("region", description="Group by 'region' or 'geography'."),  # noqa: N803
 ) -> JSONResponse:
     """Return per-region average VM pricing summary."""
+    from az_scout_bdd_sku.api_client import ApiNotConfiguredError  # type: ignore[import-untyped]
+
     from az_scout_plugin_regions_cheapest.service import compute_region_stats
 
-    result = await asyncio.to_thread(
-        compute_region_stats,
-        tenant_id=tenantId,
-        currency=currency,
-        group_by=groupBy,
-    )
+    try:
+        result = await asyncio.to_thread(
+            compute_region_stats,
+            group_by=groupBy,
+        )
+    except ApiNotConfiguredError:
+        return JSONResponse(
+            {"error": "BDD SKU API is not configured. Set the API URL in plugin settings."},
+            status_code=503,
+        )
     return JSONResponse(
         {
             "rows": [r.to_dict() for r in result.rows],
             "timestampUtc": result.timestamp_utc,
-            "currency": result.currency,
             "dataSource": result.data_source,
-            "coveragePct": result.coverage_pct,
         }
     )
 
 
 @router.get("/cheapest")
 async def cheapest(
-    tenantId: str | None = Query(None, description="Azure tenant ID."),  # noqa: N803
-    currency: str = Query("USD", description="ISO 4217 currency code."),
     topN: int = Query(10, description="Number of cheapest regions to return."),  # noqa: N803
 ) -> JSONResponse:
     """Return the top N cheapest Azure regions by average VM price."""
+    from az_scout_bdd_sku.api_client import ApiNotConfiguredError
+
     from az_scout_plugin_regions_cheapest.service import get_cheapest_regions
 
-    rows, data_source = await asyncio.to_thread(
-        get_cheapest_regions,
-        tenant_id=tenantId,
-        currency=currency,
-        top_n=topN,
-    )
+    try:
+        rows, data_source = await asyncio.to_thread(
+            get_cheapest_regions,
+            top_n=topN,
+        )
+    except ApiNotConfiguredError:
+        return JSONResponse(
+            {"error": "BDD SKU API is not configured. Set the API URL in plugin settings."},
+            status_code=503,
+        )
     return JSONResponse({"rows": rows, "dataSource": data_source})

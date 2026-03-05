@@ -11,9 +11,10 @@ class RegionPriceRow:
     region_name: str
     region_id: str
     avg_price: float | None
-    availability_pct: float
+    median_price: float | None
+    min_price: float | None
+    max_price: float | None
     sku_count: int
-    priced_count: int
     timestamp_utc: str
     country_code: str = ""
     lat: float | None = None
@@ -26,9 +27,10 @@ class RegionPriceRow:
             "regionName": self.region_name,
             "regionId": self.region_id,
             "avgPrice": self.avg_price,
-            "availabilityPct": round(self.availability_pct, 2),
+            "medianPrice": self.median_price,
+            "minPrice": self.min_price,
+            "maxPrice": self.max_price,
             "skuCount": self.sku_count,
-            "pricedCount": self.priced_count,
             "timestampUtc": self.timestamp_utc,
             "countryCode": self.country_code,
             "lat": self.lat,
@@ -45,10 +47,9 @@ class CheapestRegionRow:
     region_name: str
     region_id: str
     avg_price: float
+    median_price: float
     delta_vs_cheapest: float
-    availability_pct: float
     sku_count: int
-    priced_count: int
     timestamp_utc: str
 
     def to_dict(self) -> dict[str, object]:
@@ -59,10 +60,9 @@ class CheapestRegionRow:
             "regionName": self.region_name,
             "regionId": self.region_id,
             "avgPrice": round(self.avg_price, 6),
+            "medianPrice": round(self.median_price, 6),
             "deltaVsCheapest": round(self.delta_vs_cheapest, 6),
-            "availabilityPct": round(self.availability_pct, 2),
             "skuCount": self.sku_count,
-            "pricedCount": self.priced_count,
             "timestampUtc": self.timestamp_utc,
         }
 
@@ -73,6 +73,4 @@ class RegionPriceSummaryResult:
 
     rows: list[RegionPriceRow] = field(default_factory=list)
     timestamp_utc: str = ""
-    currency: str = "USD"
-    data_source: str = "live"
-    coverage_pct: float = 0.0
+    data_source: str = "bdd"

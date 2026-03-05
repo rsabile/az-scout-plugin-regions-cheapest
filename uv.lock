@@ -62,11 +62,26 @@ wheels = [
 ]
 
 [[package]]
+name = "az-scout-plugin-bdd-sku"
+version = "2026.3.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "az-scout" },
+    { name = "fastapi" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/16/ab/5e9b5a49e4527244e2abf4d8dbf1c1c6b3950d86ed39c9c39919f8597a33/az_scout_plugin_bdd_sku-2026.3.5.1.tar.gz", hash = "sha256:5f1c451cee4db6444448f18885e02f19155e8d95c19764b3eff9391e9c5bab45", size = 137937, upload-time = "2026-03-05T15:53:50.283Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/45/7d/89378753e7634cb3528df61ebf601c40c5193b1b457c8a032d0df27a9681/az_scout_plugin_bdd_sku-2026.3.5.1-py3-none-any.whl", hash = "sha256:927bf742503ce14b15d4816737783c89a9c1ff2ae8538b28124eafb3d5a3b188", size = 20356, upload-time = "2026-03-05T15:53:48.682Z" },
+]
+
+[[package]]
 name = "az-scout-plugin-regions-cheapest"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "az-scout" },
+    { name = "az-scout-plugin-bdd-sku" },
     { name = "fastapi" },
 ]
 
@@ -83,6 +98,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "az-scout" },
+    { name = "az-scout-plugin-bdd-sku" },
     { name = "fastapi" },
 ]
 

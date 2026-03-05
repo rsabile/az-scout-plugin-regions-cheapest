@@ -1,6 +1,6 @@
 // Regions Cheapest plugin – main JS
-// Globals from app.js: apiFetch, tenantQS, subscriptions, regions
-/* global apiFetch, tenantQS, d3 */
+// Globals from app.js: apiFetch, d3
+/* global apiFetch, d3 */
 (function () {
     const PLUGIN = "regions-cheapest";
     const container = document.getElementById("plugin-tab-" + PLUGIN);
@@ -43,7 +43,6 @@
 
         // Bind controls
         document.getElementById("rc-refresh")?.addEventListener("click", () => loadData());
-        document.getElementById("rc-currency")?.addEventListener("change", () => loadData());
         document.querySelectorAll('input[name="rc-group"]').forEach(el =>
             el.addEventListener("change", () => loadData())
         );
@@ -64,10 +63,6 @@
             })
         );
 
-        // React to tenant changes
-        const tenantEl = document.getElementById("tenant-select");
-        if (tenantEl) tenantEl.addEventListener("change", () => loadData());
-
         // Initial load
         loadData();
     }
@@ -76,9 +71,8 @@
     // 3. Data loading
     // -----------------------------------------------------------------------
     function getParams() {
-        const currency = document.getElementById("rc-currency")?.value || "USD";
         const groupBy = document.querySelector('input[name="rc-group"]:checked')?.value || "region";
-        return { currency, groupBy };
+        return { groupBy };
     }
 
     async function loadData() {
@@ -91,9 +85,8 @@
         content.classList.add("d-none");
         errorEl.classList.add("d-none");
 
-        const { currency, groupBy } = getParams();
-        const tqs = tenantQS("&");
-        const url = `/plugins/${PLUGIN}/summary?currency=${encodeURIComponent(currency)}&groupBy=${encodeURIComponent(groupBy)}${tqs}`;
+        const { groupBy } = getParams();
+        const url = `/plugins/${PLUGIN}/summary?groupBy=${encodeURIComponent(groupBy)}`;
 
         try {
             const resp = await apiFetch(url);
@@ -222,7 +215,6 @@
                 const name = d.properties.name || d.properties.NAME || a3;
                 if (cd) {
                     showTooltip(tooltip, event, name, cd.avgPrice,
-                        cd.regions.length, resp.currency,
                         cd.regions.map(r => r.regionName).join(", "),
                         resp.timestampUtc);
                 }
@@ -263,16 +255,15 @@
             .attr("opacity", d => d.avgPrice != null ? 0.85 : 0.3)
             .on("mouseover", (event, d) => {
                 showTooltip(tooltip, event, d.regionName, d.avgPrice,
-                    1, resp.currency,
-                    `${d.geography} | Avail: ${d.availabilityPct.toFixed(1)}% | SKUs: ${d.skuCount}`,
+                    `${d.geography} | SKUs: ${d.skuCount}`,
                     resp.timestampUtc);
             })
             .on("mousemove", (event) => moveTooltip(tooltip, event))
             .on("mouseout", () => tooltip.style("display", "none"));
     }
 
-    function showTooltip(tooltip, event, title, price, count, currency, detail, timestamp) {
-        const priceStr = price != null ? `${currency} ${price.toFixed(4)}` : "N/A";
+    function showTooltip(tooltip, event, title, price, detail, timestamp) {
+        const priceStr = price != null ? `USD ${price.toFixed(4)}` : "N/A";
         const ts = timestamp ? new Date(timestamp).toLocaleString() : "";
         tooltip.html(`
             <div class="rc-tt-title">${escapeHtml(title)}</div>
@@ -360,8 +351,7 @@
             .attr("rx", 2)
             .on("mouseover", (event, d) => {
                 showTooltip(tooltip, event, d.regionName, d.avgPrice,
-                    1, resp.currency,
-                    `${d.geography} | Avail: ${d.availabilityPct.toFixed(1)}%`,
+                    `${d.geography} | SKUs: ${d.skuCount}`,
                     resp.timestampUtc);
             })
             .on("mousemove", (event) => moveTooltip(tooltip, event))
@@ -402,13 +392,16 @@
             }
         });
 
-        const currency = resp.currency || "USD";
+        const fmtPrice = (v) => v != null ? "USD " + v.toFixed(4) : '<span class="rc-na">N/A</span>';
+
         tbody.innerHTML = rows.map(r => `<tr>
             <td>${escapeHtml(r.geography)}</td>
             <td>${escapeHtml(r.regionName)}</td>
             <td><code>${escapeHtml(r.regionId)}</code></td>
-            <td class="text-end">${r.availabilityPct != null ? r.availabilityPct.toFixed(1) + "%" : '<span class="rc-na">N/A</span>'}</td>
-            <td class="text-end">${r.avgPrice != null ? currency + " " + r.avgPrice.toFixed(4) : '<span class="rc-na">N/A</span>'}</td>
+            <td class="text-end">${fmtPrice(r.avgPrice)}</td>
+            <td class="text-end">${fmtPrice(r.medianPrice)}</td>
+            <td class="text-end">${fmtPrice(r.minPrice)}</td>
+            <td class="text-end">${fmtPrice(r.maxPrice)}</td>
         </tr>`).join("");
     }
 
@@ -418,24 +411,8 @@
     function renderDataSourceBadge(resp) {
         const badge = document.getElementById("rc-data-source-badge");
         if (!badge) return;
-        const src = resp.dataSource || "live";
-        const coverage = resp.coveragePct != null ? resp.coveragePct : null;
-        const labels = {
-            db: "Source: DB cache",
-            hybrid: "Source: Hybrid (DB + Live)",
-            live: "Source: Live API",
-        };
-        const colors = {
-            db: "bg-success",
-            hybrid: "bg-warning text-dark",
-            live: "bg-info text-dark",
-        };
-        let text = labels[src] || ("Source: " + src);
-        if (coverage != null && src !== "live") {
-            text += " (" + coverage.toFixed(0) + "% coverage)";
-        }
-        badge.textContent = text;
-        badge.className = "badge ms-2 " + (colors[src] || "bg-secondary");
+        badge.textContent = "Source: BDD API";
+        badge.className = "badge ms-2 bg-success";
     }
 
     // -----------------------------------------------------------------------
