@@ -13,7 +13,10 @@ dependency — without a configured BDD API URL, it returns an error.
 
 import json
 import logging
+import statistics
+import threading
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +31,7 @@ _CACHE_TTL = 600  # 10 minutes
 
 # Module-level cache: key -> (timestamp, result)
 _result_cache: dict[str, tuple[float, RegionPriceSummaryResult]] = {}
+_cache_lock = threading.Lock()
 
 _DATA_DIR = Path(__file__).parent / "static" / "data"
 
@@ -67,7 +71,9 @@ def _enrich_region(
 
 def _fetch_all_summary_rows() -> list[dict[str, Any]]:
     """Fetch all pricing summary rows from the BDD API, handling pagination."""
-    from az_scout_bdd_sku.api_client import v1_pricing_summary_latest  # type: ignore[import-untyped]
+    from az_scout_bdd_sku.api_client import (  # type: ignore[import-untyped]
+        v1_pricing_summary_latest,
+    )
 
     all_rows: list[dict[str, Any]] = []
     cursor = ""
@@ -84,6 +90,44 @@ def _fetch_all_summary_rows() -> list[dict[str, Any]]:
             break
         cursor = next_cursor
     return all_rows
+
+
+def _aggregate_by_geography(region_result: RegionPriceSummaryResult) -> RegionPriceSummaryResult:
+    """Aggregate per-region rows into per-geography rows.
+
+    Uses mean-of-means for avg/median price, min/max across all regions,
+    and sum for sku_count.
+    """
+    geo_groups: dict[str, list[RegionPriceRow]] = defaultdict(list)
+    for row in region_result.rows:
+        geo_groups[row.geography].append(row)
+
+    agg_rows: list[RegionPriceRow] = []
+    for geography, rows in geo_groups.items():
+        avg_prices = [r.avg_price for r in rows if r.avg_price is not None]
+        median_prices = [r.median_price for r in rows if r.median_price is not None]
+        min_prices = [r.min_price for r in rows if r.min_price is not None]
+        max_prices = [r.max_price for r in rows if r.max_price is not None]
+        agg_rows.append(
+            RegionPriceRow(
+                geography=geography,
+                region_name=geography,
+                region_id=geography,
+                avg_price=statistics.mean(avg_prices) if avg_prices else None,
+                median_price=statistics.mean(median_prices) if median_prices else None,
+                min_price=min(min_prices) if min_prices else None,
+                max_price=max(max_prices) if max_prices else None,
+                sku_count=sum(r.sku_count for r in rows),
+                timestamp_utc=region_result.timestamp_utc,
+            )
+        )
+
+    agg_rows.sort(key=lambda r: (r.avg_price is None, r.avg_price or 0))
+    return RegionPriceSummaryResult(
+        rows=agg_rows,
+        timestamp_utc=region_result.timestamp_utc,
+        data_source=region_result.data_source,
+    )
 
 
 def compute_region_stats(
@@ -105,13 +149,30 @@ def compute_region_stats(
     RegionPriceSummaryResult
         Contains rows for each region and metadata.
     """
-    cache_key = "summary"
+    # Raw per-region data is the base cache layer; geography is derived from it.
+    cache_key = "summary_region"
     now = time.monotonic()
-    cached = _result_cache.get(cache_key)
-    if cached is not None:
-        ts, data = cached
-        if now - ts < _CACHE_TTL:
-            return data
+
+    with _cache_lock:
+        cached = _result_cache.get(cache_key)
+        _cached_region: RegionPriceSummaryResult | None = None
+        _cached_geo: RegionPriceSummaryResult | None = None
+        if cached is not None:
+            ts, region_data = cached
+            if now - ts < _CACHE_TTL:
+                if group_by != "geography":
+                    _cached_region = region_data
+                else:
+                    geo_cached = _result_cache.get("summary_geography")
+                    if geo_cached is not None:
+                        geo_ts, geo_data = geo_cached
+                        if now - geo_ts < _CACHE_TTL:
+                            _cached_geo = geo_data
+
+    if _cached_region is not None:
+        return _cached_region
+    if _cached_geo is not None:
+        return _cached_geo
 
     from az_scout_bdd_sku.api_client import ApiNotConfiguredError
 
@@ -158,13 +219,22 @@ def compute_region_stats(
 
     rows.sort(key=lambda r: (r.avg_price is None, r.avg_price or 0))
 
-    result = RegionPriceSummaryResult(
+    region_result = RegionPriceSummaryResult(
         rows=rows,
         timestamp_utc=timestamp,
         data_source="bdd",
     )
-    _result_cache[cache_key] = (time.monotonic(), result)
-    return result
+
+    with _cache_lock:
+        _result_cache[cache_key] = (time.monotonic(), region_result)
+
+    if group_by == "geography":
+        geo_result = _aggregate_by_geography(region_result)
+        with _cache_lock:
+            _result_cache["summary_geography"] = (time.monotonic(), geo_result)
+        return geo_result
+
+    return region_result
 
 
 def get_cheapest_regions(
