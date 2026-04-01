@@ -4,12 +4,15 @@ Provides a world-map choropleth/region-points view, bar chart, and table
 ranking Azure regions by average VM hourly price.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from az_scout.plugin_api import TabDefinition
-from fastapi import APIRouter
+if TYPE_CHECKING:
+    from az_scout.plugin_api import ChatMode, TabDefinition
+    from fastapi import APIRouter
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -43,6 +46,8 @@ class RegionsCheapestPlugin:
 
     def get_tabs(self) -> list[TabDefinition] | None:
         """Return UI tab definitions."""
+        from az_scout.plugin_api import TabDefinition
+
         return [
             TabDefinition(
                 id="regions-cheapest",
@@ -53,7 +58,7 @@ class RegionsCheapestPlugin:
             )
         ]
 
-    def get_chat_modes(self) -> list[Any] | None:
+    def get_chat_modes(self) -> list[ChatMode] | None:
         """No chat modes for this plugin."""
         return None
 

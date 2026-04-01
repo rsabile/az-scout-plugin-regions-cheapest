@@ -196,11 +196,39 @@ class TestComputeRegionStats:
 
         from az_scout_plugin_regions_cheapest.service import compute_region_stats
 
-        with patch(
-            "az_scout_bdd_sku.api_client.v1_pricing_summary_latest",
-            side_effect=ApiNotConfiguredError("not configured"),
-        ), pytest.raises(ApiNotConfiguredError):
+        with (
+            patch(
+                "az_scout_bdd_sku.api_client.v1_pricing_summary_latest",
+                side_effect=ApiNotConfiguredError("not configured"),
+            ),
+            pytest.raises(ApiNotConfiguredError),
+        ):
             compute_region_stats()
+
+    def test_group_by_geography_aggregates(self) -> None:
+        from az_scout_plugin_regions_cheapest.service import compute_region_stats
+
+        result = compute_region_stats(group_by="geography")
+        # All 3 mock rows use geography "Unknown" (no region_geography.json in tests)
+        assert len(result.rows) >= 1
+        # row ids are geography names, not region ids
+        assert all(r.region_id == r.geography for r in result.rows)
+
+    def test_group_by_geography_sku_count_summed(self) -> None:
+        from az_scout_plugin_regions_cheapest.service import compute_region_stats
+
+        region_result = compute_region_stats(group_by="region")
+        geo_result = compute_region_stats(group_by="geography")
+        total_region_skus = sum(r.sku_count for r in region_result.rows)
+        total_geo_skus = sum(r.sku_count for r in geo_result.rows)
+        assert total_geo_skus == total_region_skus
+
+    def test_group_by_geography_sorted_ascending(self) -> None:
+        from az_scout_plugin_regions_cheapest.service import compute_region_stats
+
+        result = compute_region_stats(group_by="geography")
+        prices = [r.avg_price for r in result.rows if r.avg_price is not None]
+        assert prices == sorted(prices)
 
 
 class TestCaching:
